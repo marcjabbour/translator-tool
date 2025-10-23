@@ -206,6 +206,30 @@ class Error(Base):
     )
 
 
+class Progress(Base):
+    """
+    Progress table for storing daily/weekly progress metrics.
+
+    Schema matches architecture/6-data-model-sql-supabasepostgres.md
+    """
+    __tablename__ = "progress"
+
+    user_id = Column(String, nullable=False, primary_key=True, comment="From JWT token")
+    period = Column(Date, nullable=False, primary_key=True, comment="Date for this progress snapshot")
+
+    # Progress metrics stored as JSONB
+    metrics = Column(JSONB, nullable=False, comment="accuracy, time_spent, error_breakdown")
+
+    created_at = Column(DateTime(timezone=True), default=func.now())
+    updated_at = Column(DateTime(timezone=True), default=func.now(), onupdate=func.now())
+
+    # Indexes
+    __table_args__ = (
+        Index('idx_progress_user_period', 'user_id', 'period'),
+        Index('idx_progress_period', 'period'),
+    )
+
+
 class UserProfile(Base):
     """
     User profile and aggregate statistics table.
@@ -776,6 +800,11 @@ class DatabaseManager:
         """Get error repository with session."""
         session = self.get_session()
         return ErrorRepository(session)
+
+    def get_progress_analytics_repository(self) -> 'ProgressRepository':
+        """Get progress repository with session."""
+        session = self.get_session()
+        return ProgressRepository(session)
 
 
 class UserProgressRepository:
@@ -1386,4 +1415,184 @@ class ErrorRepository:
 
         except Exception as e:
             logger.error(f"Failed to get error stats: {e}")
+            raise
+
+
+# Progress API Models
+class ProgressRequest(BaseModel):
+    """Pydantic model for progress API requests."""
+    user_id: str = Field(..., description="User identifier")
+    days_back: Optional[int] = Field(30, description="Number of days to look back for trends", ge=1, le=365)
+
+    class Config:
+        from_attributes = True
+
+
+class ProgressMetrics(BaseModel):
+    """Pydantic model for progress metrics."""
+    accuracy: float = Field(..., description="Average accuracy rate 0..1", ge=0.0, le=1.0)
+    time_minutes: int = Field(..., description="Total time spent in minutes", ge=0)
+    error_breakdown: Dict[str, int] = Field(default_factory=dict, description="Error counts by type")
+    lessons_completed: int = Field(..., description="Number of lessons completed", ge=0)
+    streak_days: int = Field(..., description="Current learning streak in days", ge=0)
+    improvement_rate: float = Field(..., description="Rate of improvement over period", ge=-1.0, le=1.0)
+
+    class Config:
+        from_attributes = True
+
+
+class TrendPoint(BaseModel):
+    """Pydantic model for trend data points."""
+    date: str = Field(..., description="Date in YYYY-MM-DD format")
+    accuracy: float = Field(..., description="Accuracy for this date", ge=0.0, le=1.0)
+    time_minutes: int = Field(..., description="Time spent on this date", ge=0)
+
+    class Config:
+        from_attributes = True
+
+
+class ProgressSummary(BaseModel):
+    """Pydantic model for comprehensive progress summary."""
+    current: ProgressMetrics = Field(..., description="Current period metrics")
+    weekly: ProgressMetrics = Field(..., description="Weekly metrics")
+    monthly: ProgressMetrics = Field(..., description="Monthly metrics")
+    trends: List[TrendPoint] = Field(default_factory=list, description="Trend data points")
+    improvement_areas: List[str] = Field(default_factory=list, description="Areas needing improvement")
+
+    class Config:
+        from_attributes = True
+
+
+class ProgressResponse(BaseModel):
+    """Pydantic model for progress API responses."""
+    weekly: ProgressMetrics = Field(..., description="Weekly progress metrics")
+    trends: List[TrendPoint] = Field(default_factory=list, description="Progress trend points")
+    improvement_areas: List[str] = Field(default_factory=list, description="Recommended focus areas")
+
+    class Config:
+        from_attributes = True
+
+
+class ProgressCreate(BaseModel):
+    """Pydantic model for creating progress records."""
+    user_id: str = Field(..., description="User identifier")
+    period: str = Field(..., description="Date period in YYYY-MM-DD format")
+    metrics: Dict[str, Any] = Field(..., description="Progress metrics as JSON")
+
+    class Config:
+        from_attributes = True
+
+
+# Progress Repository
+class ProgressRepository:
+    """Repository for progress data operations."""
+
+    def __init__(self, db_session: Session):
+        """Initialize repository with database session."""
+        self.db = db_session
+
+    def create_or_update_progress(self, progress_data: ProgressCreate) -> Progress:
+        """Create or update progress record for a user and period."""
+        try:
+            from datetime import datetime
+            period_date = datetime.strptime(progress_data.period, "%Y-%m-%d").date()
+
+            # Check if record exists
+            existing = self.db.query(Progress).filter(
+                Progress.user_id == progress_data.user_id,
+                Progress.period == period_date
+            ).first()
+
+            if existing:
+                # Update existing record
+                existing.metrics = progress_data.metrics
+                existing.updated_at = func.now()
+                self.db.commit()
+                self.db.refresh(existing)
+                logger.info(f"Updated progress for user {progress_data.user_id}, period {progress_data.period}")
+                return existing
+            else:
+                # Create new record
+                progress = Progress(
+                    user_id=progress_data.user_id,
+                    period=period_date,
+                    metrics=progress_data.metrics
+                )
+                self.db.add(progress)
+                self.db.commit()
+                self.db.refresh(progress)
+                logger.info(f"Created progress for user {progress_data.user_id}, period {progress_data.period}")
+                return progress
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to create/update progress: {e}")
+            raise
+
+    def get_user_progress(self, user_id: str, days_back: int = 30) -> List[Progress]:
+        """Get progress records for a user within specified days."""
+        try:
+            from datetime import date, timedelta
+            start_date = date.today() - timedelta(days=days_back)
+
+            progress_records = self.db.query(Progress).filter(
+                Progress.user_id == user_id,
+                Progress.period >= start_date
+            ).order_by(Progress.period.desc()).all()
+
+            return progress_records
+
+        except Exception as e:
+            logger.error(f"Failed to get user progress: {e}")
+            raise
+
+    def get_progress_by_period(self, user_id: str, start_date: str, end_date: str) -> List[Progress]:
+        """Get progress records for a user within a date range."""
+        try:
+            from datetime import datetime
+            start = datetime.strptime(start_date, "%Y-%m-%d").date()
+            end = datetime.strptime(end_date, "%Y-%m-%d").date()
+
+            progress_records = self.db.query(Progress).filter(
+                Progress.user_id == user_id,
+                Progress.period >= start,
+                Progress.period <= end
+            ).order_by(Progress.period.asc()).all()
+
+            return progress_records
+
+        except Exception as e:
+            logger.error(f"Failed to get progress by period: {e}")
+            raise
+
+    def delete_old_progress(self, days_to_keep: int = 365) -> int:
+        """Delete progress records older than specified days."""
+        try:
+            from datetime import date, timedelta
+            cutoff_date = date.today() - timedelta(days=days_to_keep)
+
+            deleted_count = self.db.query(Progress).filter(
+                Progress.period < cutoff_date
+            ).delete()
+
+            self.db.commit()
+            logger.info(f"Deleted {deleted_count} old progress records")
+            return deleted_count
+
+        except Exception as e:
+            self.db.rollback()
+            logger.error(f"Failed to delete old progress: {e}")
+            raise
+
+    def get_latest_progress(self, user_id: str) -> Optional[Progress]:
+        """Get the most recent progress record for a user."""
+        try:
+            latest = self.db.query(Progress).filter(
+                Progress.user_id == user_id
+            ).order_by(Progress.period.desc()).first()
+
+            return latest
+
+        except Exception as e:
+            logger.error(f"Failed to get latest progress: {e}")
             raise

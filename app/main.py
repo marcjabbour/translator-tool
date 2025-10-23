@@ -15,7 +15,7 @@ from .models import (
     LessonRequest, LessonResponse, LessonCreate, QuizRequest, QuizResponse, QuizQuestion,
     UserProgressUpdate, UserProgressResponse, QuizAttemptCreate, QuizAttemptResponse,
     UserProfileResponse, DashboardStats, DatabaseManager, EvaluationRequest, EvaluationResponse,
-    AttemptCreate, ErrorCreate
+    AttemptCreate, ErrorCreate, ProgressRequest, ProgressResponse
 )
 from .ai_controller import AIController, StoryGenerationRequest, QuizGenerationRequest
 from .auth_controller import AuthController
@@ -23,6 +23,7 @@ from .rate_limiter import RateLimiter
 from .cache_service import create_cache_service
 from .progress_controller import ProgressController
 from .evaluation_service import EvaluationService
+from .progress_service import ProgressService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -35,12 +36,13 @@ auth_controller: AuthController = None
 rate_limiter: RateLimiter = None
 cache_service = None
 evaluation_service: EvaluationService = None
+progress_service: ProgressService = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service
+    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service, progress_service
 
     # Initialize services
     database_url = os.getenv("DATABASE_URL", "postgresql://localhost/translator_tool")
@@ -58,6 +60,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize evaluation service
     evaluation_service = EvaluationService(cache_service=cache_service)
+
+    # Initialize progress service
+    progress_service = ProgressService(db_manager=db_manager)
 
     logger.info("Application startup completed")
     yield
@@ -817,4 +822,92 @@ async def evaluate_quiz_responses(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error during evaluation"
+        )
+
+
+@app.get("/api/v1/progress", response_model=ProgressResponse)
+async def get_user_progress(
+    user_id: str,
+    days_back: int = 30,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> ProgressResponse:
+    """
+    Get user progress analytics including trends and improvement areas.
+
+    Args:
+        user_id: User identifier (must match authenticated user)
+        days_back: Number of days to look back for trends (1-365)
+        user_data: Authenticated user data
+
+    Returns:
+        Progress analytics with weekly metrics, trends, and improvement areas
+
+    Raises:
+        HTTPException: If user is not authorized or service error occurs
+    """
+    try:
+        # Validate user authorization
+        authenticated_user_id = user_data.get("sub") or user_data.get("user_id")
+        if not authenticated_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data in token"
+            )
+
+        # Check if user is requesting their own data
+        if user_id != authenticated_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="Access denied: can only view your own progress"
+            )
+
+        # Validate days_back parameter
+        if not (1 <= days_back <= 365):
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="days_back must be between 1 and 365"
+            )
+
+        logger.info(f"Fetching progress for user {user_id}, days_back={days_back}")
+
+        # Get progress summary from service
+        progress_summary = progress_service.get_user_progress_summary(user_id, days_back)
+
+        # Convert to API response format
+        from .models import ProgressMetrics, TrendPoint
+
+        weekly_metrics = ProgressMetrics(
+            accuracy=progress_summary.weekly.accuracy,
+            time_minutes=progress_summary.weekly.time_minutes,
+            error_breakdown=progress_summary.weekly.error_breakdown,
+            lessons_completed=progress_summary.weekly.lessons_completed,
+            streak_days=progress_summary.weekly.streak_days,
+            improvement_rate=progress_summary.weekly.improvement_rate
+        )
+
+        trend_points = [
+            TrendPoint(
+                date=point.date.strftime("%Y-%m-%d"),
+                accuracy=point.accuracy,
+                time_minutes=point.time_minutes
+            )
+            for point in progress_summary.trends
+        ]
+
+        response = ProgressResponse(
+            weekly=weekly_metrics,
+            trends=trend_points,
+            improvement_areas=progress_summary.improvement_areas
+        )
+
+        logger.info(f"Progress retrieved for user {user_id}: accuracy={weekly_metrics.accuracy:.2f}, trends={len(trend_points)} points")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Progress retrieval failed for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving progress data"
         )
