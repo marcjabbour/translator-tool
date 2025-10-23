@@ -49,9 +49,11 @@ async def lifespan(app: FastAPI):
     global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service, progress_service, sync_service
 
     # Initialize services
-    database_url = os.getenv("DATABASE_URL", "postgresql://localhost/translator_tool")
-    db_manager = DatabaseManager(database_url)
-    db_manager.create_tables()
+    skip_db_init = os.getenv("SKIP_DB_INIT", "false").lower() == "true"
+    if not skip_db_init:
+        database_url = os.getenv("DATABASE_URL", "postgresql://localhost/translator_tool")
+        db_manager = DatabaseManager(database_url)
+        db_manager.create_tables()
 
     # Initialize cache service (use Redis if available, otherwise in-memory)
     use_redis = os.getenv("REDIS_URL") is not None
@@ -59,17 +61,19 @@ async def lifespan(app: FastAPI):
 
     # Initialize AI controller with cache service
     ai_controller = AIController(cache_service=cache_service)
-    auth_controller = AuthController(db_manager=db_manager, cache_service=cache_service)
+    if not skip_db_init:
+        auth_controller = AuthController(db_manager=db_manager, cache_service=cache_service)
+        # Initialize progress service
+        progress_service = ProgressService(db_manager=db_manager)
+
     rate_limiter = RateLimiter()
 
     # Initialize evaluation service
     evaluation_service = EvaluationService(cache_service=cache_service)
 
-    # Initialize progress service
-    progress_service = ProgressService(db_manager=db_manager)
-
     # Initialize sync service
-    sync_service = SyncService(db_manager=db_manager, cache_service=cache_service)
+    if not skip_db_init:
+        sync_service = SyncService(db_manager=db_manager, cache_service=cache_service)
 
     logger.info("Application startup completed")
     yield

@@ -16,10 +16,12 @@ dependencies:
 
   # HTTP Client
   dio: ^5.3.2
+  http: ^1.1.0
 
   # Local Storage
   hive: ^2.2.3
   hive_flutter: ^1.1.0
+  shared_preferences: ^2.2.2
 
   # UI Components
   cupertino_icons: ^1.0.6
@@ -47,9 +49,9 @@ dev_dependencies:
 flutter:
   uses-material-design: true
 
-  assets:
-    - assets/images/
-    - assets/icons/
+  # assets:
+    # - assets/images/
+    # - assets/icons/
 
 flutter_intl:
   enabled: true

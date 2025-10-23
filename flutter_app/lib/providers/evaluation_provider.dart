@@ -165,7 +165,7 @@ final evaluationServiceProvider = Provider<EvaluationService>((ref) {
 /// Provider for quiz evaluation
 final quizEvaluationProvider = FutureProvider.family<EvaluationResponse, EvaluationRequest>(
   (ref, request) async {
-    final authState = ref.watch(authStateProvider);
+    final authState = ref.watch(authProvider);
     final evaluationService = ref.watch(evaluationServiceProvider);
 
     return authState.when(
@@ -187,7 +187,7 @@ final quizEvaluationProvider = FutureProvider.family<EvaluationResponse, Evaluat
 /// Provider for user evaluation attempts
 final userAttemptsProvider = FutureProvider.family<List<AttemptRecord>, int>(
   (ref, limit) async {
-    final authState = ref.watch(authStateProvider);
+    final authState = ref.watch(authProvider);
     final evaluationService = ref.watch(evaluationServiceProvider);
 
     return authState.when(
@@ -209,7 +209,7 @@ final userAttemptsProvider = FutureProvider.family<List<AttemptRecord>, int>(
 /// Provider for user error statistics
 final userErrorStatsProvider = FutureProvider<Map<String, int>>(
   (ref) async {
-    final authState = ref.watch(authStateProvider);
+    final authState = ref.watch(authProvider);
     final evaluationService = ref.watch(evaluationServiceProvider);
 
     return authState.when(
@@ -238,7 +238,7 @@ class EvaluationStateNotifier extends StateNotifier<EvaluationState> {
     state = const EvaluationState.loading();
 
     try {
-      final authState = _ref.read(authStateProvider).value;
+      final authState = _ref.read(authProvider).value;
       if (authState?.token == null) {
         throw const EvaluationException('User not authenticated');
       }

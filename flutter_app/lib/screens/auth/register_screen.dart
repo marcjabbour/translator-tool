@@ -244,78 +244,64 @@ class _RegisterScreenState extends State<RegisterScreen> {
 
                 CupertinoFormSection.insetGrouped(
                   children: [
-                    CupertinoTextFormFieldRow(
-                      controller: _passwordController,
+                    CupertinoFormRow(
                       prefix: const Icon(
                         CupertinoIcons.lock,
                         color: CupertinoColors.systemGrey,
                       ),
-                      placeholder: 'Password',
-                      obscureText: _obscurePassword,
-                      textInputAction: TextInputAction.next,
-                      suffix: CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        minSize: 0,
-                        onPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                        child: Icon(
-                          _obscurePassword
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                          color: CupertinoColors.systemGrey,
-                          size: 20,
+                      child: CupertinoTextField(
+                        controller: _passwordController,
+                        placeholder: 'Password',
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.next,
+                        decoration: const BoxDecoration(),
+                        suffix: CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minSize: 0,
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                          child: Icon(
+                            _obscurePassword
+                                ? CupertinoIcons.eye
+                                : CupertinoIcons.eye_slash,
+                            color: CupertinoColors.systemGrey,
+                            size: 20,
+                          ),
                         ),
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter a password';
-                        }
-                        if (value.length < 8) {
-                          return 'Password must be at least 8 characters';
-                        }
-                        if (!value.contains(RegExp(r'[!@#$%^&*(),.?":{}|<>]'))) {
-                          return 'Password must contain a special character';
-                        }
-                        return null;
-                      },
                     ),
-                    CupertinoTextFormFieldRow(
-                      controller: _confirmPasswordController,
+                    CupertinoFormRow(
                       prefix: const Icon(
                         CupertinoIcons.lock_fill,
                         color: CupertinoColors.systemGrey,
                       ),
-                      placeholder: 'Confirm password',
-                      obscureText: _obscureConfirmPassword,
-                      textInputAction: TextInputAction.done,
-                      suffix: CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        minSize: 0,
-                        onPressed: () {
-                          setState(() {
-                            _obscureConfirmPassword = !_obscureConfirmPassword;
-                          });
-                        },
-                        child: Icon(
-                          _obscureConfirmPassword
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                          color: CupertinoColors.systemGrey,
-                          size: 20,
+                      child: CupertinoTextField(
+                        controller: _confirmPasswordController,
+                        placeholder: 'Confirm password',
+                        obscureText: _obscureConfirmPassword,
+                        textInputAction: TextInputAction.done,
+                        decoration: const BoxDecoration(),
+                        suffix: CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minSize: 0,
+                          onPressed: () {
+                            setState(() {
+                              _obscureConfirmPassword = !_obscureConfirmPassword;
+                            });
+                          },
+                          child: Icon(
+                            _obscureConfirmPassword
+                                ? CupertinoIcons.eye
+                                : CupertinoIcons.eye_slash,
+                            color: CupertinoColors.systemGrey,
+                            size: 20,
+                          ),
                         ),
+                        onSubmitted: (_) => _handleRegister(),
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please confirm your password';
-                        }
-                        if (value != _passwordController.text) {
-                          return 'Passwords do not match';
-                        }
-                        return null;
-                      },
                     ),
                   ],
                 ),

@@ -7,7 +7,7 @@ import uuid
 from datetime import datetime
 from typing import Optional, Dict, Any, List
 from dataclasses import dataclass
-from sqlalchemy import Column, String, Text, DateTime, Integer, Boolean, Float, UniqueConstraint, Index, ForeignKey
+from sqlalchemy import Column, String, Text, DateTime, Date, Integer, Boolean, Float, UniqueConstraint, Index, ForeignKey
 from sqlalchemy.dialects.postgresql import UUID, JSONB
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.sql import func

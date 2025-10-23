@@ -133,38 +133,35 @@ class _LoginScreenState extends State<LoginScreen> {
                         return null;
                       },
                     ),
-                    CupertinoTextFormFieldRow(
-                      controller: _passwordController,
+                    CupertinoFormRow(
                       prefix: const Icon(
                         CupertinoIcons.lock,
                         color: CupertinoColors.systemGrey,
                       ),
-                      placeholder: 'Password',
-                      obscureText: _obscurePassword,
-                      textInputAction: TextInputAction.done,
-                      suffix: CupertinoButton(
-                        padding: EdgeInsets.zero,
-                        minSize: 0,
-                        onPressed: () {
-                          setState(() {
-                            _obscurePassword = !_obscurePassword;
-                          });
-                        },
-                        child: Icon(
-                          _obscurePassword
-                              ? CupertinoIcons.eye
-                              : CupertinoIcons.eye_slash,
-                          color: CupertinoColors.systemGrey,
-                          size: 20,
+                      child: CupertinoTextField(
+                        controller: _passwordController,
+                        placeholder: 'Password',
+                        obscureText: _obscurePassword,
+                        textInputAction: TextInputAction.done,
+                        decoration: const BoxDecoration(),
+                        suffix: CupertinoButton(
+                          padding: EdgeInsets.zero,
+                          minSize: 0,
+                          onPressed: () {
+                            setState(() {
+                              _obscurePassword = !_obscurePassword;
+                            });
+                          },
+                          child: Icon(
+                            _obscurePassword
+                                ? CupertinoIcons.eye
+                                : CupertinoIcons.eye_slash,
+                            color: CupertinoColors.systemGrey,
+                            size: 20,
+                          ),
                         ),
+                        onSubmitted: (_) => _handleLogin(),
                       ),
-                      validator: (value) {
-                        if (value == null || value.isEmpty) {
-                          return 'Please enter your password';
-                        }
-                        return null;
-                      },
-                      onFieldSubmitted: (_) => _handleLogin(),
                     ),
                   ],
                 ),
