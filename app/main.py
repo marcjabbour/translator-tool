@@ -5,17 +5,24 @@ Implements POST /api/v1/story endpoint with authentication and rate limiting.
 
 import os
 import logging
-from typing import Dict, Any
+from typing import Dict, Any, List
 from fastapi import FastAPI, HTTPException, Depends, status
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 
-from .models import LessonRequest, LessonResponse, LessonCreate, QuizRequest, QuizResponse, QuizQuestion, DatabaseManager
+from .models import (
+    LessonRequest, LessonResponse, LessonCreate, QuizRequest, QuizResponse, QuizQuestion,
+    UserProgressUpdate, UserProgressResponse, QuizAttemptCreate, QuizAttemptResponse,
+    UserProfileResponse, DashboardStats, DatabaseManager, EvaluationRequest, EvaluationResponse,
+    AttemptCreate, ErrorCreate
+)
 from .ai_controller import AIController, StoryGenerationRequest, QuizGenerationRequest
 from .auth_controller import AuthController
 from .rate_limiter import RateLimiter
 from .cache_service import create_cache_service
+from .progress_controller import ProgressController
+from .evaluation_service import EvaluationService
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -27,12 +34,13 @@ ai_controller: AIController = None
 auth_controller: AuthController = None
 rate_limiter: RateLimiter = None
 cache_service = None
+evaluation_service: EvaluationService = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service
+    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service
 
     # Initialize services
     database_url = os.getenv("DATABASE_URL", "postgresql://localhost/translator_tool")
@@ -47,6 +55,9 @@ async def lifespan(app: FastAPI):
     ai_controller = AIController(cache_service=cache_service)
     auth_controller = AuthController()
     rate_limiter = RateLimiter()
+
+    # Initialize evaluation service
+    evaluation_service = EvaluationService(cache_service=cache_service)
 
     logger.info("Application startup completed")
     yield
@@ -352,4 +363,458 @@ async def api_health_check():
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
             detail="Database connection failed"
+        )
+
+
+# User Progress Tracking Endpoints
+
+@app.post("/api/v1/progress/lesson/{lesson_id}/view")
+async def track_lesson_view(
+    lesson_id: str,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> UserProgressResponse:
+    """Track when a user views a lesson."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.track_lesson_view(user_id, lesson_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to track lesson view: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to track lesson view"
+        )
+
+
+@app.post("/api/v1/progress/lesson/{lesson_id}/toggle")
+async def track_translation_toggle(
+    lesson_id: str,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> UserProgressResponse:
+    """Track when a user toggles translation view."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.track_translation_toggle(user_id, lesson_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to track translation toggle: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to track translation toggle"
+        )
+
+
+@app.put("/api/v1/progress/lesson/{lesson_id}")
+async def update_lesson_progress(
+    lesson_id: str,
+    update_data: UserProgressUpdate,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> UserProgressResponse:
+    """Update lesson progress with custom data."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.update_lesson_progress(user_id, lesson_id, update_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to update lesson progress: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to update lesson progress"
+        )
+
+
+@app.post("/api/v1/progress/quiz-attempt")
+async def record_quiz_attempt(
+    attempt_data: QuizAttemptCreate,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> QuizAttemptResponse:
+    """Record a quiz attempt and update related progress."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.record_quiz_attempt(user_id, attempt_data)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to record quiz attempt: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to record quiz attempt"
+        )
+
+
+@app.get("/api/v1/progress/lessons")
+async def get_user_progress(
+    lesson_id: str = None,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> List[UserProgressResponse]:
+    """Get progress records for a user."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.get_user_progress(user_id, lesson_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user progress: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user progress"
+        )
+
+
+@app.get("/api/v1/progress/quiz-attempts")
+async def get_quiz_attempts(
+    quiz_id: str = None,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> List[QuizAttemptResponse]:
+    """Get quiz attempts for a user."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.get_quiz_attempts(user_id, quiz_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get quiz attempts: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get quiz attempts"
+        )
+
+
+@app.get("/api/v1/profile")
+async def get_user_profile(
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> UserProfileResponse:
+    """Get or create user profile with aggregated stats."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.get_user_profile(user_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get user profile: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get user profile"
+        )
+
+
+@app.get("/api/v1/dashboard")
+async def get_dashboard_stats(
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> DashboardStats:
+    """Get comprehensive dashboard statistics."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.get_dashboard_stats(user_id)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get dashboard stats: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get dashboard stats"
+        )
+
+
+@app.get("/api/v1/analytics")
+async def get_learning_analytics(
+    days: int = 30,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """Get detailed learning analytics for a user."""
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        if days < 1 or days > 365:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Days parameter must be between 1 and 365"
+            )
+
+        progress_repo = db_manager.get_progress_repository()
+        profile_repo = db_manager.get_profile_repository()
+        controller = ProgressController(progress_repo, profile_repo)
+
+        return controller.get_learning_analytics(user_id, days)
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get learning analytics: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to get learning analytics"
+        )
+
+
+# Evaluation Endpoint
+
+@app.post("/api/v1/evaluate", response_model=EvaluationResponse)
+async def evaluate_quiz_responses(
+    request: EvaluationRequest,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> EvaluationResponse:
+    """
+    Evaluate quiz responses using hybrid error detection approach.
+
+    Args:
+        request: Evaluation request with user responses and quiz context
+        user_data: Authenticated user information
+
+    Returns:
+        Evaluation response with attempt ID, score, and detailed feedback
+
+    Raises:
+        HTTPException: For validation or evaluation errors
+    """
+    try:
+        # Validate user authentication
+        authenticated_user_id = user_data.get("sub") or user_data.get("user_id")
+        if not authenticated_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user token"
+            )
+
+        # Ensure the user ID in request matches authenticated user
+        if request.user_id != authenticated_user_id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="User ID mismatch"
+            )
+
+        logger.info(f"Evaluation request for user {request.user_id}, quiz {request.quiz_id}")
+
+        # Get quiz repository to fetch quiz context
+        quiz_repository = db_manager.get_quiz_repository()
+        quiz = quiz_repository.get_quiz_by_id(request.quiz_id)
+
+        if not quiz:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Quiz not found: {request.quiz_id}"
+            )
+
+        # Get lesson for additional context
+        lesson_repository = db_manager.get_repository()
+        lesson = lesson_repository.get_lesson_by_id(request.lesson_id)
+
+        if not lesson:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Lesson not found: {request.lesson_id}"
+            )
+
+        # Prepare evaluation request for service
+        from .evaluation_service import EvaluationRequest as ServiceEvaluationRequest
+
+        service_request = ServiceEvaluationRequest(
+            user_id=request.user_id,
+            lesson_id=request.lesson_id,
+            quiz_id=request.quiz_id,
+            responses=request.responses,
+            quiz_context={
+                "questions": quiz.questions,
+                "answer_key": quiz.answer_key,
+                "topic": lesson.topic,
+                "level": lesson.level
+            }
+        )
+
+        # Perform evaluation using service
+        evaluation_result = evaluation_service.evaluate_quiz_responses(service_request)
+
+        # Store attempt in database
+        attempt_repo = db_manager.get_attempt_repository()
+        error_repo = db_manager.get_error_repository()
+
+        # Prepare evaluation data for database storage
+        eval_data = {
+            "feedback": [
+                {
+                    "q_index": feedback.q_index,
+                    "is_correct": feedback.is_correct,
+                    "errors": [
+                        {
+                            "type": error.type,
+                            "token": error.token,
+                            "hint": error.hint,
+                            "severity": error.severity
+                        }
+                        for error in feedback.errors
+                    ],
+                    "suggestion": feedback.suggestion,
+                    "confidence": feedback.confidence
+                }
+                for feedback in evaluation_result.feedback
+            ],
+            "overall_feedback": evaluation_result.overall_feedback
+        }
+
+        # Store attempt record
+        attempt_data = AttemptCreate(
+            user_id=request.user_id,
+            lesson_id=request.lesson_id,
+            quiz_id=request.quiz_id,
+            responses=request.responses,
+            score=evaluation_result.score,
+            eval=eval_data
+        )
+
+        attempt = attempt_repo.create_attempt(attempt_data)
+
+        # Store individual errors for analytics
+        error_records = []
+        for feedback in evaluation_result.feedback:
+            for error in feedback.errors:
+                error_records.append(ErrorCreate(
+                    user_id=request.user_id,
+                    lesson_id=request.lesson_id,
+                    quiz_id=request.quiz_id,
+                    q_index=feedback.q_index,
+                    error_type=error.type,
+                    token=error.token,
+                    details={
+                        "hint": error.hint,
+                        "severity": error.severity,
+                        "position": error.position
+                    }
+                ))
+
+        if error_records:
+            error_repo.create_errors_batch(error_records)
+
+        # Prepare response using the actual attempt_id from database
+        from .models import QuestionFeedback as ResponseQuestionFeedback, ErrorFeedback
+
+        response_feedback = []
+        for feedback in evaluation_result.feedback:
+            response_errors = [
+                ErrorFeedback(
+                    type=error.type,
+                    token=error.token,
+                    hint=error.hint
+                )
+                for error in feedback.errors
+            ]
+
+            response_feedback.append(ResponseQuestionFeedback(
+                q_index=feedback.q_index,
+                ok=feedback.is_correct,
+                errors=response_errors,
+                suggestion=feedback.suggestion
+            ))
+
+        response = EvaluationResponse(
+            attempt_id=str(attempt.attempt_id),
+            score=evaluation_result.score,
+            feedback=response_feedback
+        )
+
+        logger.info(f"Evaluation completed for user {request.user_id}: score={evaluation_result.score:.2f}, attempt_id={response.attempt_id}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during evaluation"
         )
