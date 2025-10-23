@@ -1,9 +1,19 @@
 import 'package:flutter/cupertino.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'screens/lesson_screen.dart';
+import 'screens/auth/login_screen.dart';
+import 'screens/auth/profile_screen.dart';
+import 'screens/dashboard_screen.dart';
+import 'providers/auth_provider.dart';
 import 'services/lesson_service.dart';
+import 'services/auth_service.dart';
 
-void main() {
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // Initialize services
+  await AuthService.initialize();
+
   runApp(
     ProviderScope(
       child: TranslatorApp(),
@@ -17,14 +27,41 @@ class TranslatorApp extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     return CupertinoApp(
-      title: 'Translator Tool',
+      title: 'Lebanese Arabic Translator',
       theme: const CupertinoThemeData(
         primaryColor: CupertinoColors.systemBlue,
         brightness: Brightness.light,
       ),
-      home: const HomeScreen(),
+      initialRoute: '/',
+      routes: {
+        '/': (context) => const AuthGuard(),
+        '/login': (context) => const LoginScreen(),
+        '/dashboard': (context) => const DashboardScreen(),
+        '/profile': (context) => const ProfileScreen(),
+      },
       debugShowCheckedModeBanner: false,
     );
+  }
+}
+
+/// Auth guard that redirects to login or dashboard based on auth state
+class AuthGuard extends ConsumerWidget {
+  const AuthGuard({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final authState = ref.watch(authProvider);
+
+    return switch (authState.status) {
+      AuthStatus.loading => const Center(
+          child: CupertinoActivityIndicator(radius: 20),
+        ),
+      AuthStatus.authenticated => const DashboardScreen(),
+      AuthStatus.unauthenticated => const LoginScreen(),
+      AuthStatus.initial => const Center(
+          child: CupertinoActivityIndicator(radius: 20),
+        ),
+    };
   }
 }
 

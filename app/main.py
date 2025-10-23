@@ -15,7 +15,9 @@ from .models import (
     LessonRequest, LessonResponse, LessonCreate, QuizRequest, QuizResponse, QuizQuestion,
     UserProgressUpdate, UserProgressResponse, QuizAttemptCreate, QuizAttemptResponse,
     UserProfileResponse, DashboardStats, DatabaseManager, EvaluationRequest, EvaluationResponse,
-    AttemptCreate, ErrorCreate, ProgressRequest, ProgressResponse
+    AttemptCreate, ErrorCreate, ProgressRequest, ProgressResponse,
+    UserRegistrationRequest, UserLoginRequest, TokenRefreshRequest, AuthResponse, TokenResponse,
+    UserProfileUpdate, AuthUserProfileResponse, SyncRequest, SyncResponse, SyncStatus, SyncItemRequest
 )
 from .ai_controller import AIController, StoryGenerationRequest, QuizGenerationRequest
 from .auth_controller import AuthController
@@ -24,6 +26,7 @@ from .cache_service import create_cache_service
 from .progress_controller import ProgressController
 from .evaluation_service import EvaluationService
 from .progress_service import ProgressService
+from .sync_service import SyncService, SyncItem, SyncResult
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -37,12 +40,13 @@ rate_limiter: RateLimiter = None
 cache_service = None
 evaluation_service: EvaluationService = None
 progress_service: ProgressService = None
+sync_service: SyncService = None
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Application lifespan manager."""
-    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service, progress_service
+    global db_manager, ai_controller, auth_controller, rate_limiter, cache_service, evaluation_service, progress_service, sync_service
 
     # Initialize services
     database_url = os.getenv("DATABASE_URL", "postgresql://localhost/translator_tool")
@@ -55,7 +59,7 @@ async def lifespan(app: FastAPI):
 
     # Initialize AI controller with cache service
     ai_controller = AIController(cache_service=cache_service)
-    auth_controller = AuthController()
+    auth_controller = AuthController(db_manager=db_manager, cache_service=cache_service)
     rate_limiter = RateLimiter()
 
     # Initialize evaluation service
@@ -63,6 +67,9 @@ async def lifespan(app: FastAPI):
 
     # Initialize progress service
     progress_service = ProgressService(db_manager=db_manager)
+
+    # Initialize sync service
+    sync_service = SyncService(db_manager=db_manager, cache_service=cache_service)
 
     logger.info("Application startup completed")
     yield
@@ -910,4 +917,541 @@ async def get_user_progress(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="Internal server error while retrieving progress data"
+        )
+
+
+# Authentication Endpoints
+
+@app.post("/api/v1/auth/register", response_model=AuthResponse)
+async def register_user(request: UserRegistrationRequest) -> AuthResponse:
+    """
+    Register a new user account.
+
+    Args:
+        request: User registration data
+
+    Returns:
+        Authentication response with tokens and user data
+
+    Raises:
+        HTTPException: If registration fails
+    """
+    try:
+        logger.info(f"User registration attempt: {request.email}")
+
+        # Prepare profile data
+        profile_data = {
+            "dialect": request.dialect,
+            "difficulty": request.difficulty,
+            "translit_style": request.translit_style or {}
+        }
+
+        # Register user through auth controller
+        result = auth_controller.register_user(
+            email=request.email,
+            password=request.password,
+            profile_data=profile_data
+        )
+
+        # Prepare response
+        response = AuthResponse(
+            user_id=result["user_id"],
+            email=result["email"],
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            expires_in=86400,  # 24 hours
+            profile=result["profile"]
+        )
+
+        logger.info(f"User registered successfully: {request.email}")
+        return response
+
+    except ValueError as e:
+        logger.warning(f"User registration validation failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(e)
+        )
+    except Exception as e:
+        logger.error(f"User registration failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during registration"
+        )
+
+
+@app.post("/api/v1/auth/login", response_model=AuthResponse)
+async def login_user(request: UserLoginRequest) -> AuthResponse:
+    """
+    Authenticate user with email and password.
+
+    Args:
+        request: User login credentials
+
+    Returns:
+        Authentication response with tokens and user data
+
+    Raises:
+        HTTPException: If authentication fails
+    """
+    try:
+        logger.info(f"User login attempt: {request.email}")
+
+        # Authenticate user through auth controller
+        result = auth_controller.authenticate_user(
+            email=request.email,
+            password=request.password
+        )
+
+        # Prepare response
+        response = AuthResponse(
+            user_id=result["user_id"],
+            email=result["email"],
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            expires_in=86400,  # 24 hours
+            profile=result["profile"]
+        )
+
+        logger.info(f"User authenticated successfully: {request.email}")
+        return response
+
+    except ValueError as e:
+        logger.warning(f"User authentication failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid credentials"
+        )
+    except Exception as e:
+        logger.error(f"User authentication error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during authentication"
+        )
+
+
+@app.post("/api/v1/auth/refresh", response_model=TokenResponse)
+async def refresh_token(request: TokenRefreshRequest) -> TokenResponse:
+    """
+    Refresh access token using refresh token.
+
+    Args:
+        request: Token refresh request
+
+    Returns:
+        New tokens
+
+    Raises:
+        HTTPException: If token refresh fails
+    """
+    try:
+        logger.info("Token refresh attempt")
+
+        # Refresh tokens through auth controller
+        result = auth_controller.refresh_tokens(request.refresh_token)
+
+        # Prepare response
+        response = TokenResponse(
+            access_token=result["access_token"],
+            refresh_token=result["refresh_token"],
+            expires_in=86400  # 24 hours
+        )
+
+        logger.info("Token refreshed successfully")
+        return response
+
+    except ValueError as e:
+        logger.warning(f"Token refresh failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid refresh token"
+        )
+    except Exception as e:
+        logger.error(f"Token refresh error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during token refresh"
+        )
+
+
+@app.post("/api/v1/auth/logout")
+async def logout_user(user_data: Dict[str, Any] = Depends(get_current_user)):
+    """
+    Logout user by invalidating session.
+
+    Args:
+        user_data: Authenticated user data
+
+    Returns:
+        Success message
+
+    Raises:
+        HTTPException: If logout fails
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data"
+            )
+
+        logger.info(f"User logout attempt: {user_id}")
+
+        # Logout user through auth controller
+        success = auth_controller.logout_user(user_id)
+
+        if success:
+            logger.info(f"User logged out successfully: {user_id}")
+            return {"message": "Logged out successfully"}
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Logout failed"
+            )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Logout error: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error during logout"
+        )
+
+
+@app.get("/api/v1/auth/profile", response_model=AuthUserProfileResponse)
+async def get_user_profile_auth(user_data: Dict[str, Any] = Depends(get_current_user)) -> AuthUserProfileResponse:
+    """
+    Get current user's profile data.
+
+    Args:
+        user_data: Authenticated user data
+
+    Returns:
+        User profile data
+
+    Raises:
+        HTTPException: If profile retrieval fails
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data"
+            )
+
+        logger.info(f"Profile retrieval for user: {user_id}")
+
+        # Get profile through auth controller
+        profile = auth_controller.get_user_profile(user_id)
+
+        # Prepare response
+        response = AuthUserProfileResponse(
+            user_id=user_id,
+            email=user_data.get("email", ""),
+            display_name=profile.get("settings", {}).get("display_name"),
+            dialect=profile.get("dialect", "lebanese"),
+            difficulty=profile.get("difficulty", "beginner"),
+            translit_style=profile.get("translit_style", {}),
+            settings=profile.get("settings", {}),
+            last_login=profile.get("settings", {}).get("last_login")
+        )
+
+        logger.info(f"Profile retrieved successfully for user: {user_id}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Profile retrieval failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while retrieving profile"
+        )
+
+
+@app.put("/api/v1/auth/profile", response_model=AuthUserProfileResponse)
+async def update_user_profile_auth(
+    request: UserProfileUpdate,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> AuthUserProfileResponse:
+    """
+    Update current user's profile data.
+
+    Args:
+        request: Profile update data
+        user_data: Authenticated user data
+
+    Returns:
+        Updated user profile data
+
+    Raises:
+        HTTPException: If profile update fails
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data"
+            )
+
+        logger.info(f"Profile update for user: {user_id}")
+
+        # Prepare update data
+        update_data = {}
+        if request.display_name is not None:
+            update_data["display_name"] = request.display_name
+        if request.dialect is not None:
+            update_data["preferred_level"] = request.dialect  # Map to existing field
+        if request.difficulty is not None:
+            update_data["preferred_level"] = request.difficulty
+        if request.settings is not None:
+            update_data["settings"] = request.settings
+        if request.translit_style is not None:
+            if "settings" not in update_data:
+                update_data["settings"] = {}
+            update_data["settings"]["translit_style"] = request.translit_style
+
+        # Update profile through auth controller
+        success = auth_controller.update_user_profile(user_id, update_data)
+
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Profile update failed"
+            )
+
+        # Get updated profile
+        profile = auth_controller.get_user_profile(user_id)
+
+        # Prepare response
+        response = AuthUserProfileResponse(
+            user_id=user_id,
+            email=user_data.get("email", ""),
+            display_name=profile.get("settings", {}).get("display_name"),
+            dialect=profile.get("dialect", "lebanese"),
+            difficulty=profile.get("difficulty", "beginner"),
+            translit_style=profile.get("translit_style", {}),
+            settings=profile.get("settings", {})
+        )
+
+        logger.info(f"Profile updated successfully for user: {user_id}")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Profile update failed: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Internal server error while updating profile"
+        )
+
+
+# Synchronization Endpoints
+
+@app.post("/api/v1/sync", response_model=SyncResponse)
+async def sync_user_data(
+    request: SyncRequest,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> SyncResponse:
+    """
+    Synchronize user data between client and server.
+
+    Args:
+        request: Sync request with client data and timestamp
+        user_data: Authenticated user information
+
+    Returns:
+        Sync response with server changes and conflicts
+
+    Raises:
+        HTTPException: For sync errors
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data in token"
+            )
+
+        logger.info(f"Sync request for user: {user_id}")
+
+        # Convert SyncItemRequest to SyncItem
+        client_sync_items = []
+        for item in request.client_data:
+            sync_item = SyncItem(
+                table_name=item.table_name,
+                item_id=item.item_id,
+                user_id=user_id,
+                data=item.data,
+                updated_at=item.updated_at,
+                operation=item.operation
+            )
+            client_sync_items.append(sync_item)
+
+        # Perform synchronization
+        sync_result = sync_service.sync_user_data(
+            user_id=user_id,
+            client_data=client_sync_items,
+            last_sync=request.last_sync
+        )
+
+        # Prepare response
+        response = SyncResponse(
+            result=sync_result,
+            user_id=user_id,
+            sync_timestamp=sync_result.last_sync
+        )
+
+        logger.info(f"Sync completed for user {user_id}: {sync_result.synced_count} items synced, {sync_result.conflict_count} conflicts")
+        return response
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Sync failed for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Sync operation failed: {str(e)}"
+        )
+
+
+@app.get("/api/v1/sync/status", response_model=SyncStatus)
+async def get_sync_status(
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> SyncStatus:
+    """
+    Get synchronization status for the user.
+
+    Args:
+        user_data: Authenticated user information
+
+    Returns:
+        Current sync status
+
+    Raises:
+        HTTPException: For status retrieval errors
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data in token"
+            )
+
+        # Get sync status
+        status_info = sync_service.get_sync_status(user_id)
+
+        return SyncStatus(
+            is_syncing=status_info.get("is_syncing", False),
+            last_sync=status_info.get("last_sync"),
+            pending_items=status_info.get("pending_items", 0),
+            last_error=status_info.get("last_error"),
+            sync_enabled=status_info.get("sync_enabled", True)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to get sync status for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to retrieve sync status"
+        )
+
+
+@app.post("/api/v1/sync/queue")
+async def add_to_sync_queue(
+    item: SyncItemRequest,
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, str]:
+    """
+    Add item to offline sync queue.
+
+    Args:
+        item: Sync item to queue
+        user_data: Authenticated user information
+
+    Returns:
+        Queue confirmation
+
+    Raises:
+        HTTPException: For queue errors
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data in token"
+            )
+
+        # Convert to SyncItem and add to queue
+        sync_item = SyncItem(
+            table_name=item.table_name,
+            item_id=item.item_id,
+            user_id=user_id,
+            data=item.data,
+            updated_at=item.updated_at,
+            operation=item.operation
+        )
+
+        queue_id = sync_service.queue_offline_action(sync_item)
+
+        logger.info(f"Added item to sync queue for user {user_id}: {queue_id}")
+        return {"status": "queued", "queue_id": queue_id}
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to queue sync item for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to queue sync item"
+        )
+
+
+@app.post("/api/v1/sync/process-queue")
+async def process_sync_queue(
+    user_data: Dict[str, Any] = Depends(get_current_user)
+) -> Dict[str, Any]:
+    """
+    Process all queued sync items for the user.
+
+    Args:
+        user_data: Authenticated user information
+
+    Returns:
+        Processing results
+
+    Raises:
+        HTTPException: For processing errors
+    """
+    try:
+        user_id = user_data.get("sub") or user_data.get("user_id")
+        if not user_id:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Invalid user data in token"
+            )
+
+        # Process offline queue
+        result = sync_service.process_offline_queue(user_id)
+
+        logger.info(f"Processed sync queue for user {user_id}: {result}")
+        return result
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Failed to process sync queue for user {user_id}: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to process sync queue"
         )

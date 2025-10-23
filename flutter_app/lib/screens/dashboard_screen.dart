@@ -13,8 +13,18 @@ class DashboardScreen extends ConsumerWidget {
     final profileAsync = ref.watch(userProfileProvider);
 
     return CupertinoPageScaffold(
-      navigationBar: const CupertinoNavigationBar(
-        middle: Text('Dashboard'),
+      navigationBar: CupertinoNavigationBar(
+        middle: const Text('Dashboard'),
+        trailing: CupertinoButton(
+          padding: EdgeInsets.zero,
+          onPressed: () {
+            Navigator.of(context).pushNamed('/profile');
+          },
+          child: const Icon(
+            CupertinoIcons.person_circle,
+            size: 28,
+          ),
+        ),
       ),
       child: SafeArea(
         child: CustomScrollView(

@@ -1596,3 +1596,170 @@ class ProgressRepository:
         except Exception as e:
             logger.error(f"Failed to get latest progress: {e}")
             raise
+
+
+# Authentication API Models
+class UserRegistrationRequest(BaseModel):
+    """Pydantic model for user registration requests."""
+    email: str = Field(..., description="User email address", example="user@example.com")
+    password: str = Field(..., description="User password", min_length=8)
+    dialect: Optional[str] = Field("lebanese", description="Preferred dialect")
+    difficulty: Optional[str] = Field("beginner", description="Difficulty level")
+    translit_style: Optional[Dict[str, str]] = Field(default_factory=dict, description="Transliteration preferences")
+
+    class Config:
+        from_attributes = True
+
+
+class UserLoginRequest(BaseModel):
+    """Pydantic model for user login requests."""
+    email: str = Field(..., description="User email address", example="user@example.com")
+    password: str = Field(..., description="User password")
+
+    class Config:
+        from_attributes = True
+
+
+class TokenRefreshRequest(BaseModel):
+    """Pydantic model for token refresh requests."""
+    refresh_token: str = Field(..., description="Valid refresh token")
+
+    class Config:
+        from_attributes = True
+
+
+class AuthResponse(BaseModel):
+    """Pydantic model for authentication responses."""
+    user_id: str = Field(..., description="User identifier")
+    email: str = Field(..., description="User email")
+    access_token: str = Field(..., description="JWT access token")
+    refresh_token: str = Field(..., description="JWT refresh token")
+    expires_in: int = Field(..., description="Token expiration in seconds")
+    profile: Dict[str, Any] = Field(default_factory=dict, description="User profile data")
+
+    class Config:
+        from_attributes = True
+
+
+class TokenResponse(BaseModel):
+    """Pydantic model for token refresh responses."""
+    access_token: str = Field(..., description="New JWT access token")
+    refresh_token: str = Field(..., description="New JWT refresh token")
+    expires_in: int = Field(..., description="Token expiration in seconds")
+
+    class Config:
+        from_attributes = True
+
+
+class UserProfileUpdate(BaseModel):
+    """Pydantic model for user profile updates."""
+    display_name: Optional[str] = Field(None, description="User display name")
+    dialect: Optional[str] = Field(None, description="Preferred dialect")
+    difficulty: Optional[str] = Field(None, description="Difficulty level")
+    translit_style: Optional[Dict[str, str]] = Field(None, description="Transliteration preferences")
+    settings: Optional[Dict[str, Any]] = Field(None, description="Additional user settings")
+
+    class Config:
+        from_attributes = True
+
+
+class AuthUserProfileResponse(BaseModel):
+    """Pydantic model for auth user profile responses."""
+    user_id: str = Field(..., description="User identifier")
+    email: str = Field(..., description="User email")
+    display_name: Optional[str] = Field(None, description="User display name")
+    dialect: str = Field(..., description="Preferred dialect")
+    difficulty: str = Field(..., description="Difficulty level")
+    translit_style: Dict[str, str] = Field(default_factory=dict, description="Transliteration preferences")
+    settings: Dict[str, Any] = Field(default_factory=dict, description="User settings")
+    created_at: Optional[datetime] = Field(None, description="Account creation date")
+    last_login: Optional[datetime] = Field(None, description="Last login timestamp")
+
+    class Config:
+        from_attributes = True
+
+
+# Synchronization API Models
+class SyncItemRequest(BaseModel):
+    """Pydantic model for sync item requests."""
+    table_name: str = Field(..., description="Database table name")
+    item_id: str = Field(..., description="Item identifier")
+    data: Dict[str, Any] = Field(..., description="Item data")
+    updated_at: datetime = Field(..., description="Last update timestamp")
+    operation: str = Field("update", description="Operation type: create, update, delete")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncRequest(BaseModel):
+    """Pydantic model for synchronization requests."""
+    last_sync: Optional[datetime] = Field(None, description="Last sync timestamp")
+    client_data: List[SyncItemRequest] = Field(default_factory=list, description="Client data to sync")
+    conflict_resolution: str = Field("timestamp", description="Conflict resolution strategy")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncConflict(BaseModel):
+    """Pydantic model for sync conflicts."""
+    table_name: str = Field(..., description="Table with conflict")
+    item_id: str = Field(..., description="Conflicting item ID")
+    server_data: Dict[str, Any] = Field(..., description="Server version")
+    client_data: Dict[str, Any] = Field(..., description="Client version")
+    server_updated: datetime = Field(..., description="Server update time")
+    client_updated: datetime = Field(..., description="Client update time")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncResult(BaseModel):
+    """Pydantic model for sync results."""
+    success: bool = Field(..., description="Sync success status")
+    server_changes: List[SyncItemRequest] = Field(default_factory=list, description="Changes from server")
+    conflicts: List[SyncConflict] = Field(default_factory=list, description="Sync conflicts")
+    last_sync: datetime = Field(..., description="New sync timestamp")
+    synced_count: int = Field(0, description="Number of items synced")
+    conflict_count: int = Field(0, description="Number of conflicts")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncResponse(BaseModel):
+    """Pydantic model for sync API responses."""
+    result: SyncResult = Field(..., description="Sync operation result")
+    user_id: str = Field(..., description="User identifier")
+    sync_timestamp: datetime = Field(..., description="Sync completion timestamp")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncQueueItem(BaseModel):
+    """Pydantic model for offline sync queue items."""
+    queue_id: str = Field(..., description="Queue item identifier")
+    user_id: str = Field(..., description="User identifier")
+    table_name: str = Field(..., description="Target table")
+    item_id: str = Field(..., description="Item identifier")
+    operation: str = Field(..., description="Operation: create, update, delete")
+    data: Dict[str, Any] = Field(..., description="Item data")
+    created_at: datetime = Field(..., description="Queue creation time")
+    retry_count: int = Field(0, description="Number of retry attempts")
+
+    class Config:
+        from_attributes = True
+
+
+class SyncStatus(BaseModel):
+    """Pydantic model for sync status responses."""
+    is_syncing: bool = Field(..., description="Whether sync is in progress")
+    last_sync: Optional[datetime] = Field(None, description="Last successful sync")
+    pending_items: int = Field(0, description="Number of pending sync items")
+    last_error: Optional[str] = Field(None, description="Last sync error message")
+    sync_enabled: bool = Field(True, description="Whether sync is enabled")
+
+    class Config:
+        from_attributes = True
